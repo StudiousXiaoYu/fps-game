@@ -1,0 +1,44 @@
+/* 确保FPS场景填满整个视口 */
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 移除默认的Vite样式 */
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+.crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 32px;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  pointer-events: none;
+  transition: width 0.12s cubic-bezier(0.4,0,0.2,1), height 0.12s cubic-bezier(0.4,0,0.2,1);
+}
+.crosshair::before, .crosshair::after {
+  content: '';
+  position: absolute;
+  background: white;
+  border-radius: 1px;
+}
+.crosshair::before {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+.crosshair::after {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
+}
