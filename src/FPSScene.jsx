@@ -6,11 +6,13 @@ import * as THREE from 'three'
 import Enemy from './Enemy'
 import Explosion from './Explosion'
 import React, { createContext, useContext } from 'react'
+import hitSoundUrl from '../public/hit.mp3';
+import shootSoundUrl from '../public/shut.mp3';
 
 // 射击事件上下文
 const ShootingContext = createContext(null)
 
-function EnemyManager() {
+function EnemyManager({ setShowHit, hitAudioRef }) {
   const [enemies, setEnemies] = useState(() => {
     // 生成5个随机位置和方向的敌人
     const arr = []
@@ -44,43 +46,54 @@ function EnemyManager() {
       !(shootEvent.raycaster.ray.direction instanceof THREE.Vector3)
     ) return;
     const { origin, direction } = shootEvent.raycaster.ray;
-    console.log('ray origin:', origin, 'direction:', direction);
-    if (
-      typeof origin.x !== 'number' || typeof origin.y !== 'number' || typeof origin.z !== 'number' ||
-      typeof direction.x !== 'number' || typeof direction.y !== 'number' || typeof direction.z !== 'number'
-    ) return;
-    const { raycaster } = shootEvent;
     let hitId = null;
     let hitPos = null;
     for (const enemy of enemies) {
       try {
-        if (
-          !enemy.position ||
-          !Array.isArray(enemy.position) ||
-          enemy.position.length !== 3 ||
-          enemy.position.some(v => typeof v !== 'number' || isNaN(v))
-        ) continue;
-        const sphere = new THREE.Sphere(new THREE.Vector3(...enemy.position), 0.3);
-        // 深拷贝 ray
-        const ray = raycaster.ray.clone();
-        console.log('检测enemy', enemy.id, 'sphere', sphere, 'ray', ray);
-        const intersection = ray.intersectSphere(sphere);
-        if (intersection) {
+        const enemyPos = new THREE.Vector3(...enemy.position);
+        const toEnemy = new THREE.Vector3().subVectors(enemyPos, origin);
+        const distance = toEnemy.length();
+        const cosAngle = toEnemy.normalize().dot(direction.clone().normalize());
+        // 夹角接近1且距离小于20就算命中
+        if (cosAngle > 0.99 && distance < 20) {
           hitId = enemy.id;
-          hitPos = intersection;
+          hitPos = enemy.position;
+          setShowHit(true);
+          if (hitAudioRef.current) {
+            hitAudioRef.current.currentTime = 0;
+            hitAudioRef.current.play();
+          }
           break;
         }
       } catch (err) {
         console.error('检测enemy出错', enemy, err);
-        return;
+        continue;
       }
     }
     if (hitId !== null) {
-      setEnemies(prev => prev.filter(e => e.id !== hitId));
+      setEnemies(prev => {
+        // 移除被击中的敌人
+        const filtered = prev.filter(e => e.id !== hitId);
+        // 生成一个新敌人，id递增
+        const maxId = prev.length > 0 ? Math.max(...prev.map(e => e.id)) : 0;
+        const newEnemy = {
+          id: maxId + 1,
+          position: [
+            Math.random() * 16 - 8,
+            1.6,
+            Math.random() * 16 - 8
+          ],
+          direction: [
+            Math.random() * 2 - 1,
+            0,
+            Math.random() * 2 - 1
+          ]
+        };
+        return [...filtered, newEnemy];
+      });
       setExplosions(prev => [...prev, { pos: hitPos, id: Math.random() }]);
     }
-    // eslint-disable-next-line
-  }, [shootEvent]);
+  }, [shootEvent, enemies, setShowHit, hitAudioRef])
 
   useFrame(() => {
     setEnemies(prev => prev.map(enemy => {
@@ -105,16 +118,30 @@ function EnemyManager() {
     }))
   })
 
+  useEffect(() => {
+    if (setShowHit) {
+      const timer = setTimeout(() => setShowHit(false), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [setShowHit]);
+
+  // 移除动画结束的爆炸
+  const handleExplosionEnd = (id) => {
+    setExplosions(prev => prev.filter(e => e.id !== id));
+  };
+
   return (
     <>
+      {/* 渲染敌人 */}
       {enemies.map(enemy => (
-        <Enemy key={enemy.id} id={enemy.id} position={enemy.position} />
+        <Enemy key={enemy.id} position={enemy.position} />
       ))}
-      {explosions.map(e => (
-        <Explosion key={e.id} position={e.pos} onEnd={() => setExplosions(prev => prev.filter(x => x.id !== e.id))} />
+      {/* 渲染爆炸效果 */}
+      {explosions.map(explosion => (
+        <Explosion key={explosion.id} position={explosion.pos} onEnd={() => handleExplosionEnd(explosion.id)} />
       ))}
     </>
-  )
+  );
 }
 
 export function FPSScene({ onShoot }) {
@@ -123,61 +150,47 @@ export function FPSScene({ onShoot }) {
   const [weaponInfo, setWeaponInfo] = useState({ weapon: 'rifle', ammo: weaponData.rifle.ammo })
   const [bulletHoles, setBulletHoles] = useState([])
   const [shootEvent, setShootEvent] = useState(null)
+  const [showHit, setShowHit] = useState(false);
+  const hitAudioRef = useRef(null);
+  const shootAudioRef = useRef(null);
 
   // 只保留步枪切换和换弹的 useEffect
   useEffect(() => {
-    let shooting = false
-    let shootInterval = null
     const handleKeyDown = (e) => {
       if (e.code === 'Digit1') {
-        weaponSystemRef.current?.switchWeapon('pistol')
-        setWeaponInfo(info => ({ ...info, weapon: 'pistol' }))
+        weaponSystemRef.current?.switchWeapon('pistol');
+        setWeaponInfo(info => ({ ...info, weapon: 'pistol' }));
       } else if (e.code === 'Digit2') {
-        weaponSystemRef.current?.switchWeapon('rifle')
-        setWeaponInfo(info => ({ ...info, weapon: 'rifle' }))
+        weaponSystemRef.current?.switchWeapon('rifle');
+        setWeaponInfo(info => ({ ...info, weapon: 'rifle' }));
       } else if (e.code === 'KeyR') {
-        weaponSystemRef.current?.reloadWeapon()
+        weaponSystemRef.current?.reloadWeapon();
       }
-    }
-    const startShooting = () => {
-      if (shooting) return
-      shooting = true
-      // 立即射击一次
-      weaponSystemRef.current?.fireWeapon()
-      if (onShoot) onShoot()
-      // 步枪射速取决于 cooldown
-      shootInterval = setInterval(() => {
-        weaponSystemRef.current?.fireWeapon()
-        if (onShoot) onShoot()
-      }, weaponData.rifle.cooldown * 1000)
-    }
-    const stopShooting = () => {
-      shooting = false
-      if (shootInterval) {
-        clearInterval(shootInterval)
-        shootInterval = null
-      }
-    }
+    };
+
     const handleMouseDown = (e) => {
       if (e.button === 0) {
-        startShooting()
+        // 只有有子弹时才播放射击音效
+        const ammo = weaponSystemRef.current?.ammo?.[weaponInfo.weapon] ?? 0;
+        if (ammo > 0) {
+          if (shootAudioRef.current) {
+            shootAudioRef.current.currentTime = 0;
+            shootAudioRef.current.play();
+          }
+        }
+        weaponSystemRef.current?.fireWeapon();
+        if (onShoot) onShoot();
       }
-    }
-    const handleMouseUp = (e) => {
-      if (e.button === 0) {
-        stopShooting()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('mousedown', handleMouseDown)
-    window.addEventListener('mouseup', handleMouseUp)
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('mousedown', handleMouseDown);
+
     return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('mousedown', handleMouseDown)
-      window.removeEventListener('mouseup', handleMouseUp)
-      stopShooting()
-    }
-  }, [onShoot])
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [onShoot, weaponInfo.weapon]);
 
   // 监听弹药变化
   useEffect(() => {
@@ -220,14 +233,25 @@ export function FPSScene({ onShoot }) {
 
   return (
     <>
-      <div style={{ position: 'absolute', top: 10, left: 10, color: '#fff', background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4, zIndex: 10 }}>
-        武器: {weaponInfo.weapon} | 子弹: {weaponInfo.ammo}
+      {/* 右下角子弹信息 */}
+      <div style={{
+        position: 'absolute',
+        right: 24,
+        bottom: 24,
+        color: '#fff',
+        fontSize: 22,
+        fontWeight: 'bold',
+        textShadow: '1px 1px 6px #000',
+        zIndex: 1000
+      }}>
+        {weaponInfo.weapon === 'rifle' ? '步枪' : '手枪'}
+        &nbsp;|&nbsp; 子弹：{weaponInfo.ammo}
       </div>
-      <Canvas
-        onCreated={({ camera }) => {
-          camera.position.set(0, 1.6, 5)
-        }}
-      >
+      {/* 命中提示和音效，放在 Canvas 外部 */}
+      <audio ref={hitAudioRef} src={hitSoundUrl} preload="auto" />
+      <audio ref={shootAudioRef} src={shootSoundUrl} preload="auto" />
+      {/* three.js 场景 */}
+      <Canvas>
         {/* 光照 */}
         <ambientLight intensity={0.5} />
         <directionalLight position={[10, 10, 5]} intensity={1} />
@@ -244,7 +268,7 @@ export function FPSScene({ onShoot }) {
           <WeaponSystem ref={weaponSystemRef} onBulletHole={hole => setBulletHoles(holes => [...holes, hole])} onShootRay={raycaster => setShootEvent({ raycaster, time: Date.now() })} />
           <PlayerController />
           {/* 敌人渲染 */}
-          <EnemyManager />
+          <EnemyManager setShowHit={setShowHit} hitAudioRef={hitAudioRef} />
         </ShootingContext.Provider>
       </Canvas>
     </>
@@ -298,48 +322,52 @@ function PlayerController() {
   }, [])
 
   useFrame((state, delta) => {
-    const speed = 5
-    direction.current.set(0, 0, 0)
-    if (move.current.forward) direction.current.z += 1
-    if (move.current.backward) direction.current.z -= 1
-    if (move.current.left) direction.current.x -= 1
-    if (move.current.right) direction.current.x += 1
-    direction.current.normalize()
-    // 获取摄像机方向
-    const camera = state.camera
-    const front = new THREE.Vector3()
-    camera.getWorldDirection(front)
-    front.y = 0
-    front.normalize()
-    const right = new THREE.Vector3()
-    right.crossVectors(front, camera.up).normalize()
+    delta = Math.min(delta, 0.05); // 限制最大步长，防止跳变
+    const speed = 5;
+    direction.current.set(0, 0, 0);
+    if (move.current.forward) direction.current.z += 1;
+    if (move.current.backward) direction.current.z -= 1;
+    if (move.current.left) direction.current.x -= 1;
+    if (move.current.right) direction.current.x += 1;
+    if (direction.current.lengthSq() > 0) direction.current.normalize();
+
+    // 获取摄像机方向（只用于移动方向，不要设置 rotation）
+    const camera = state.camera;
+    const front = new THREE.Vector3();
+    camera.getWorldDirection(front);
+    front.y = 0;
+    front.normalize();
+    const right = new THREE.Vector3();
+    right.crossVectors(front, camera.up).normalize();
+
     // 计算下一步位置
-    const moveVec = new THREE.Vector3()
-    moveVec.copy(front).multiplyScalar(direction.current.z * speed * delta)
-    moveVec.add(right.multiplyScalar(direction.current.x * speed * delta))
+    const moveVec = new THREE.Vector3();
+    moveVec.copy(front).multiplyScalar(direction.current.z * speed * delta);
+    moveVec.add(right.multiplyScalar(direction.current.x * speed * delta));
+
     // 跳跃和重力
-    velocityY.current -= 18 * delta // 重力加速度
-    let nextY = camera.position.y + velocityY.current * delta
-    if (nextY < 1) { // 地面高度为y=1
-      nextY = 1
-      velocityY.current = 0
-      isGrounded.current = true
+    velocityY.current -= 18 * delta; // 重力加速度
+    let nextY = camera.position.y + velocityY.current * delta;
+    if (nextY < 1) {
+      nextY = 1;
+      velocityY.current = 0;
+      isGrounded.current = true;
     }
-    const nextPos = camera.position.clone().add(moveVec)
-    nextPos.y = nextY
+    const nextPos = camera.position.clone().add(moveVec);
+    nextPos.y = nextY;
+
     // 玩家包围盒
     const playerBox = new THREE.Box3().setFromCenterAndSize(
       new THREE.Vector3(nextPos.x, nextPos.y, nextPos.z),
       new THREE.Vector3(playerRadius * 2, 2, playerRadius * 2)
-    )
+    );
     // 检查碰撞
     if (!wallBox.intersectsBox(playerBox)) {
-      camera.position.copy(nextPos)
+      camera.position.copy(nextPos);
     } else {
-      // 如果撞墙，允许y轴跳跃
-      camera.position.y = nextY
+      camera.position.y = nextY;
     }
-    // 如果有多个障碍物，可扩展为遍历所有障碍物包围盒
+    // 注意：不要设置 camera.rotation 或 camera.lookAt，方向交给 PointerLockControls
   })
   return null
 }
