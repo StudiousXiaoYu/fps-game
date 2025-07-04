@@ -3,15 +3,131 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { PointerLockControls } from '@react-three/drei'
 import { WeaponSystem, weaponData } from './WeaponSystem'
 import * as THREE from 'three'
+import Enemy from './Enemy'
+import Explosion from './Explosion'
+import React, { createContext, useContext } from 'react'
+
+// 射击事件上下文
+const ShootingContext = createContext(null)
+
+function EnemyManager() {
+  const [enemies, setEnemies] = useState(() => {
+    // 生成5个随机位置和方向的敌人
+    const arr = []
+    for (let i = 0; i < 5; i++) {
+      arr.push({
+        id: i,
+        position: [
+          Math.random() * 16 - 8, // x: -8~8
+          1.6,
+          Math.random() * 16 - 8 // z: -8~8
+        ],
+        direction: [
+          Math.random() * 2 - 1,
+          0,
+          Math.random() * 2 - 1
+        ]
+      })
+    }
+    return arr
+  })
+  const [explosions, setExplosions] = useState([])
+  const shootEvent = useContext(ShootingContext)
+
+  // 监听射击事件
+  useEffect(() => {
+    if (
+      !shootEvent ||
+      !shootEvent.raycaster ||
+      !shootEvent.raycaster.ray ||
+      !(shootEvent.raycaster.ray.origin instanceof THREE.Vector3) ||
+      !(shootEvent.raycaster.ray.direction instanceof THREE.Vector3)
+    ) return;
+    const { origin, direction } = shootEvent.raycaster.ray;
+    console.log('ray origin:', origin, 'direction:', direction);
+    if (
+      typeof origin.x !== 'number' || typeof origin.y !== 'number' || typeof origin.z !== 'number' ||
+      typeof direction.x !== 'number' || typeof direction.y !== 'number' || typeof direction.z !== 'number'
+    ) return;
+    const { raycaster } = shootEvent;
+    let hitId = null;
+    let hitPos = null;
+    for (const enemy of enemies) {
+      try {
+        if (
+          !enemy.position ||
+          !Array.isArray(enemy.position) ||
+          enemy.position.length !== 3 ||
+          enemy.position.some(v => typeof v !== 'number' || isNaN(v))
+        ) continue;
+        const sphere = new THREE.Sphere(new THREE.Vector3(...enemy.position), 0.3);
+        // 深拷贝 ray
+        const ray = raycaster.ray.clone();
+        console.log('检测enemy', enemy.id, 'sphere', sphere, 'ray', ray);
+        const intersection = ray.intersectSphere(sphere);
+        if (intersection) {
+          hitId = enemy.id;
+          hitPos = intersection;
+          break;
+        }
+      } catch (err) {
+        console.error('检测enemy出错', enemy, err);
+        return;
+      }
+    }
+    if (hitId !== null) {
+      setEnemies(prev => prev.filter(e => e.id !== hitId));
+      setExplosions(prev => [...prev, { pos: hitPos, id: Math.random() }]);
+    }
+    // eslint-disable-next-line
+  }, [shootEvent]);
+
+  useFrame(() => {
+    setEnemies(prev => prev.map(enemy => {
+      let [x, y, z] = enemy.position
+      let [dx, dy, dz] = enemy.direction
+      // 移动速度
+      const speed = 1.5 / 60
+      x += dx * speed
+      z += dz * speed
+      // 边界检测（场地范围-10~10）
+      if (x < -9 || x > 9) dx = -dx
+      if (z < -9 || z > 9) dz = -dz
+      return {
+        ...enemy,
+        position: [
+          Math.max(-9, Math.min(9, x)),
+          y,
+          Math.max(-9, Math.min(9, z))
+        ],
+        direction: [dx, dy, dz]
+      }
+    }))
+  })
+
+  return (
+    <>
+      {enemies.map(enemy => (
+        <Enemy key={enemy.id} id={enemy.id} position={enemy.position} />
+      ))}
+      {explosions.map(e => (
+        <Explosion key={e.id} position={e.pos} onEnd={() => setExplosions(prev => prev.filter(x => x.id !== e.id))} />
+      ))}
+    </>
+  )
+}
 
 export function FPSScene({ onShoot }) {
   const controlsRef = useRef()
   const weaponSystemRef = useRef()
-  const [weaponInfo, setWeaponInfo] = useState({ weapon: 'pistol', ammo: weaponData.pistol.ammo })
+  const [weaponInfo, setWeaponInfo] = useState({ weapon: 'rifle', ammo: weaponData.rifle.ammo })
   const [bulletHoles, setBulletHoles] = useState([])
+  const [shootEvent, setShootEvent] = useState(null)
 
-  // 只保留武器切换和射击的 useEffect
+  // 只保留步枪切换和换弹的 useEffect
   useEffect(() => {
+    let shooting = false
+    let shootInterval = null
     const handleKeyDown = (e) => {
       if (e.code === 'Digit1') {
         weaponSystemRef.current?.switchWeapon('pistol')
@@ -23,17 +139,43 @@ export function FPSScene({ onShoot }) {
         weaponSystemRef.current?.reloadWeapon()
       }
     }
-    const handleMouseDown = (e) => {
-      if (e.button === 0) { // 左键
+    const startShooting = () => {
+      if (shooting) return
+      shooting = true
+      // 立即射击一次
+      weaponSystemRef.current?.fireWeapon()
+      if (onShoot) onShoot()
+      // 步枪射速取决于 cooldown
+      shootInterval = setInterval(() => {
         weaponSystemRef.current?.fireWeapon()
         if (onShoot) onShoot()
+      }, weaponData.rifle.cooldown * 1000)
+    }
+    const stopShooting = () => {
+      shooting = false
+      if (shootInterval) {
+        clearInterval(shootInterval)
+        shootInterval = null
+      }
+    }
+    const handleMouseDown = (e) => {
+      if (e.button === 0) {
+        startShooting()
+      }
+    }
+    const handleMouseUp = (e) => {
+      if (e.button === 0) {
+        stopShooting()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('mousedown', handleMouseDown)
+    window.addEventListener('mouseup', handleMouseUp)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('mousedown', handleMouseDown)
+      window.removeEventListener('mouseup', handleMouseUp)
+      stopShooting()
     }
   }, [onShoot])
 
@@ -98,8 +240,12 @@ export function FPSScene({ onShoot }) {
         })}
         {/* 第一人称控制器 */}
         <PointerLockControls ref={controlsRef} />
-        <WeaponSystem ref={weaponSystemRef} onBulletHole={hole => setBulletHoles(holes => [...holes, hole])} />
-        <PlayerController />
+        <ShootingContext.Provider value={shootEvent}>
+          <WeaponSystem ref={weaponSystemRef} onBulletHole={hole => setBulletHoles(holes => [...holes, hole])} onShootRay={raycaster => setShootEvent({ raycaster, time: Date.now() })} />
+          <PlayerController />
+          {/* 敌人渲染 */}
+          <EnemyManager />
+        </ShootingContext.Provider>
       </Canvas>
     </>
   )

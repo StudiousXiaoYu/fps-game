@@ -5,15 +5,12 @@ import { forwardRef } from 'react'
 import { OBJLoader, MTLLoader } from 'three-stdlib'
 
 export const weaponData = {
-  pistol: { ammo: 12, cooldown: 0.4, color: '#333333' },
   rifle: { ammo: 30, cooldown: 0.1, color: '#2288ff' }
 }
 
 export const WeaponSystem = forwardRef((props, ref) => {
   const { onBulletHole } = props
-  const [currentWeapon, setCurrentWeapon] = useState('pistol')
   const [ammo, setAmmo] = useState({
-    pistol: weaponData.pistol.ammo,
     rifle: weaponData.rifle.ammo
   })
   const [lastShot, setLastShot] = useState(0)
@@ -26,40 +23,37 @@ export const WeaponSystem = forwardRef((props, ref) => {
 
   // 加载AK-47材质和模型
   const serverUrl = window.location.origin + '/';
-  const mtlPath =  'AK-47.mtl';
-  const objPath =  'AK-47.obj';
+  const ak47MtlPath = 'AK-47.mtl';
+  const ak47ObjPath = 'AK-47.obj';
   
-  const materials = useLoader(MTLLoader, mtlPath, loader => {
+  const ak47Materials = useLoader(MTLLoader, ak47MtlPath, loader => {
     loader.setResourcePath(serverUrl);
     loader.setPath(serverUrl);
   });
-  const ak47 = useLoader(OBJLoader, objPath, loader => {
-    materials.preload();
-    loader.setMaterials(materials);
+  const ak47 = useLoader(OBJLoader, ak47ObjPath, loader => {
+    ak47Materials.preload();
+    loader.setMaterials(ak47Materials);
   });
-
-  // 武器切换逻辑
-  const switchWeapon = (weaponType) => {
-    if (ammo[weaponType] > 0) {
-      setCurrentWeapon(weaponType)
-    }
-  }
 
   // 射击逻辑
   const fireWeapon = () => {
     if (reloading) return // 换弹期间不能射击
     const now = performance.now() / 1000
-    if (ammo[currentWeapon] <= 0) return
-    if (now - lastShot < weaponData[currentWeapon].cooldown) return
+    if (ammo.rifle <= 0) return
+    if (now - lastShot < weaponData.rifle.cooldown) return
     setLastShot(now)
     setAmmo(prev => ({
       ...prev,
-      [currentWeapon]: prev[currentWeapon] - 1
+      rifle: prev.rifle - 1
     }))
     setRecoil(0.18) // 触发后坐力
     // Raycast
     const raycaster = new THREE.Raycaster()
     raycaster.set(camera.position, camera.getWorldDirection(new THREE.Vector3()))
+    // 广播射线事件
+    if (props.onShootRay) {
+      props.onShootRay(raycaster)
+    }
     // 只检测墙体（可扩展）
     const wall = scene.children.find(obj => obj.geometry && obj.geometry.type === 'BoxGeometry' && obj.position.z === -10)
     let hit = null
@@ -108,7 +102,7 @@ export const WeaponSystem = forwardRef((props, ref) => {
     setTimeout(() => {
       setAmmo(prev => ({
         ...prev,
-        [currentWeapon]: weaponData[currentWeapon].ammo
+        rifle: weaponData.rifle.ammo
       }))
       setReloading(false)
     }, 900) // 换弹总时长900ms
@@ -144,37 +138,15 @@ export const WeaponSystem = forwardRef((props, ref) => {
 
   // 暴露方法给父组件
   if (ref) {
-    ref.current = { fireWeapon, switchWeapon, ammo, reloadWeapon }
+    ref.current = { fireWeapon, ammo, reloadWeapon }
   }
 
   // 武器模型参数
-  const weaponColor = weaponData[currentWeapon].color
+  const weaponColor = weaponData.rifle.color
 
   return (
     <group ref={weaponRef}>
-      {currentWeapon === 'rifle' ? (
-        // 步枪显示AK-47贴图模型
-        <primitive object={ak47} scale={0.08} position={[0, -0.2, 0]} />
-      ) : (
-        // 手枪用几何体
-        <>
-          {/* 枪身 */}
-          <mesh>
-            <boxGeometry args={[0.6, 0.2, 1.2]} />
-            <meshStandardMaterial color={weaponColor} />
-          </mesh>
-          {/* 枪把 */}
-          <mesh position={[0, -0.3, 0.3]}>
-            <boxGeometry args={[0.18, 0.4, 0.3]} />
-            <meshStandardMaterial color="#222" />
-          </mesh>
-          {/* 枪口高亮 */}
-          <mesh position={[0, 0, -0.6]}>
-            <cylinderGeometry args={[0.06, 0.06, 0.2, 16]} />
-            <meshStandardMaterial color="#ffcc00" />
-          </mesh>
-        </>
-      )}
+      <primitive object={ak47} scale={0.08} position={[0, -0.2, 0]} />
     </group>
   )
 })
