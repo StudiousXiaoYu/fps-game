@@ -117,6 +117,7 @@ export default function HomePage({ onStart }) {
   const [showLogin, setShowLogin] = useState(false);
   const [username, setUsername] = useState('');
   const [showRank, setShowRank] = useState(false);
+  const [loginTip, setLoginTip] = useState('');
 
   useEffect(() => {
     const name = Cookies.get('username');
@@ -204,7 +205,14 @@ export default function HomePage({ onStart }) {
         </button>
       </div>
       <button
-        onClick={onStart}
+        onClick={() => {
+          if (!username) {
+            setLoginTip('请先登录后再开始游戏！');
+            setShowLogin(true);
+            return;
+          }
+          onStart();
+        }}
         className="font-bold rounded-full border-4 border-yellow-400 bg-black/70 text-yellow-200 hover:bg-yellow-400 hover:text-black transition shadow-2xl"
         style={{
           fontFamily: 'Impact, Arial Black, sans-serif',
@@ -216,7 +224,6 @@ export default function HomePage({ onStart }) {
           minWidth: 'min(80vw, 480px)',
           minHeight: 'clamp(3.5rem, 8vw, 6rem)',
         }}
-        disabled={!username}
       >
         开始游戏
       </button>
@@ -246,7 +253,7 @@ export default function HomePage({ onStart }) {
             alignItems: 'center',
           }}>
             <button
-              onClick={()=>setShowLogin(false)}
+              onClick={()=>{setShowLogin(false); setLoginTip('')}}
               style={{
                 position: 'absolute',
                 right: 18,
@@ -264,6 +271,7 @@ export default function HomePage({ onStart }) {
               onMouseOut={e=>e.currentTarget.style.color='#bbb'}
               aria-label="关闭"
             >×</button>
+            {loginTip && <div style={{color:'#e53935',fontWeight:700,fontSize:'1.1rem',marginBottom:12}}>{loginTip}</div>}
             <h2 style={{fontSize:'2rem',fontWeight:800,marginBottom:24,letterSpacing:1}}>请输入用户名</h2>
             <input
               style={{
@@ -308,6 +316,7 @@ export default function HomePage({ onStart }) {
                     await db.collection('user_score').add({ username, score: 0 });
                   }
                   setShowLogin(false);
+                  setLoginTip('');
                 }
               }}
             >保存</button>
