@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "@cloudbase/cloudbase-mcp": "^1.8.10",
+    "@cloudbase/js-sdk": "^2.17.6",
     "@react-three/drei": "^10.4.2",
     "@react-three/fiber": "^9.1.4",
     "@tailwindcss/postcss": "^4.1.11",
     "autoprefixer": "^10.4.21",
+    "js-cookie": "^3.0.5",
     "postcss": "^8.5.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

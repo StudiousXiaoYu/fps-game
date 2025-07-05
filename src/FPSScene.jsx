@@ -6,8 +6,9 @@ import * as THREE from 'three'
 import Enemy from './Enemy'
 import Explosion from './Explosion'
 import React, { createContext, useContext } from 'react'
-import hitSoundUrl from '../public/hit.mp3';
-import shootSoundUrl from '../public/shut.mp3';
+import Cookies from 'js-cookie';
+import { app, ensureLogin } from './utils/cloudbase';
+import { useNavigate } from 'react-router-dom';
 
 // 射击事件上下文
 const ShootingContext = createContext(null)
@@ -35,6 +36,22 @@ function EnemyManager({ setShowHit, hitAudioRef }) {
   })
   const [explosions, setExplosions] = useState([])
   const shootEvent = useContext(ShootingContext)
+  const [score, setScore] = useState(0);
+
+  // 新增：分数保存逻辑
+  useEffect(() => {
+    // 进入场景时拉取当前分数
+    const fetchScore = async () => {
+      await ensureLogin();
+      const db = app.database();
+      const username = Cookies.get('username');
+      if (!username) return;
+      const res = await db.collection('user_score').where({ username }).get();
+      if (res.data && res.data.length > 0) setScore(res.data[0].score || 0);
+      else setScore(0);
+    };
+    fetchScore();
+  }, []);
 
   // 监听射击事件
   useEffect(() => {
@@ -92,8 +109,28 @@ function EnemyManager({ setShowHit, hitAudioRef }) {
         return [...filtered, newEnemy];
       });
       setExplosions(prev => [...prev, { pos: hitPos, id: Math.random() }]);
+      // 新增：累计分数并保存
+      const username = Cookies.get('username');
+      if (username) {
+        setScore(prev => {
+          const newScore = prev + 1;
+          // 实时保存到数据库
+          (async () => {
+            await ensureLogin();
+            const db = app.database();
+            // upsert 逻辑：有则更新，无则插入
+            const res = await db.collection('user_score').where({ username }).get();
+            if (res.data && res.data.length > 0) {
+              await db.collection('user_score').doc(res.data[0]._id).update({ score: newScore });
+            } else {
+              await db.collection('user_score').add({ username, score: newScore });
+            }
+          })();
+          return newScore;
+        });
+      }
     }
-  }, [shootEvent, enemies, setShowHit, hitAudioRef])
+  }, [shootEvent, enemies, setShowHit, hitAudioRef]);
 
   useFrame(() => {
     setEnemies(prev => prev.map(enemy => {
@@ -153,6 +190,10 @@ export function FPSScene({ onShoot }) {
   const [showHit, setShowHit] = useState(false);
   const hitAudioRef = useRef(null);
   const shootAudioRef = useRef(null);
+  const navigate = useNavigate();
+  const [showExit, setShowExit] = useState(false);
+  const isLockedRef = useRef(true);
+  const [isLocked, setIsLocked] = useState(true);
 
   // 只保留步枪切换和换弹的 useEffect
   useEffect(() => {
@@ -213,6 +254,15 @@ export function FPSScene({ onShoot }) {
     return () => clearInterval(id)
   }, [bulletHoles.length])
 
+  useEffect(() => {
+    const handleEsc = (e) => {
+      console.log('ESC pressed, isLockedRef:', isLockedRef.current);
+      if (e.key === 'Escape' && !isLockedRef.current) setShowExit(true);
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
+
   // 基础场景元素
   const SceneElements = () => {
     return (
@@ -248,8 +298,8 @@ export function FPSScene({ onShoot }) {
         &nbsp;|&nbsp; 子弹：{weaponInfo.ammo}
       </div>
       {/* 命中提示和音效，放在 Canvas 外部 */}
-      <audio ref={hitAudioRef} src={hitSoundUrl} preload="auto" />
-      <audio ref={shootAudioRef} src={shootSoundUrl} preload="auto" />
+      <audio ref={hitAudioRef} src="/hit.mp3" preload="auto" />
+      <audio ref={shootAudioRef} src="/shut.mp3" preload="auto" />
       {/* three.js 场景 */}
       <Canvas>
         {/* 光照 */}
@@ -263,7 +313,19 @@ export function FPSScene({ onShoot }) {
           return <BulletHole key={i} pos={hole.pos} opacity={alpha} />
         })}
         {/* 第一人称控制器 */}
-        <PointerLockControls ref={controlsRef} />
+        <PointerLockControls
+          ref={controlsRef}
+          onLock={() => {
+            setIsLocked(true);
+            isLockedRef.current = true;
+            console.log('PointerLock locked');
+          }}
+          onUnlock={() => {
+            setIsLocked(false);
+            isLockedRef.current = false;
+            console.log('PointerLock unlocked');
+          }}
+        />
         <ShootingContext.Provider value={shootEvent}>
           <WeaponSystem ref={weaponSystemRef} onBulletHole={hole => setBulletHoles(holes => [...holes, hole])} onShootRay={raycaster => setShootEvent({ raycaster, time: Date.now() })} />
           <PlayerController />
@@ -271,6 +333,68 @@ export function FPSScene({ onShoot }) {
           <EnemyManager setShowHit={setShowHit} hitAudioRef={hitAudioRef} />
         </ShootingContext.Provider>
       </Canvas>
+      {/* 退出游戏弹窗 */}
+      {showExit && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 100,
+          background: 'rgba(0,0,0,0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: 20,
+            boxShadow: '0 8px 32px 0 #00000022',
+            padding: '2.5rem 2.5rem 2rem 2.5rem',
+            minWidth: 320,
+            maxWidth: '90vw',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+            position: 'relative',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}>
+            <h2 style={{fontSize:'1.5rem',fontWeight:800,marginBottom:24}}>确定要退出游戏吗？</h2>
+            <button
+              style={{
+                background:'#FFD700',
+                color:'#222',
+                fontWeight:'bold',
+                fontSize:'1.1rem',
+                border:'none',
+                borderRadius: 12,
+                padding:'0.7em 2.5em',
+                boxShadow:'0 2px 8px #0001',
+                cursor:'pointer',
+                transition:'background 0.2s',
+                marginBottom:12
+              }}
+              onClick={() => navigate('/')}
+              onMouseOver={e=>e.currentTarget.style.background='#FFC300'}
+              onMouseOut={e=>e.currentTarget.style.background='#FFD700'}
+            >退出游戏</button>
+            <button
+              style={{
+                background:'#eee',
+                color:'#666',
+                fontWeight:'bold',
+                fontSize:'1.1rem',
+                border:'none',
+                borderRadius: 12,
+                padding:'0.7em 2.5em',
+                boxShadow:'0 2px 8px #0001',
+                cursor:'pointer',
+                transition:'background 0.2s',
+              }}
+              onClick={() => setShowExit(false)}
+            >取消</button>
+          </div>
+        </div>
+      )}
     </>
   )
 }
